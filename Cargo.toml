@@ -1,0 +1,11 @@
+[package]
+name = "pmarket-slack"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bigdecimal = "0.4.8"
+chrono = "0.4.41"
+diesel = { version = "2.2.12", features = ["postgres", "numeric", "chrono"] }
+dotenvy = "0.15.7"
+rust_decimal = "1.37.2"
