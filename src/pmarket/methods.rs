@@ -203,13 +203,17 @@ pub fn resolve_market(
 ) -> Result<(), String> {
     use crate::schema::markets::dsl as markets_dsl;
 
-    if resolution.is_none() {
-        let bchanges = get_balance_changes_on_market(market_id, conn)
-            .map_err(|e| format!("Error fetching balance changes: {}", e))?;
+    let market = markets_dsl::markets
+        .filter(markets_dsl::id.eq(market_id))
+        .first::<Market>(conn)
+        .map_err(|e| format!("Error fetching market: {}", e))?;
+    let bchanges = get_balance_changes_on_market(market_id, conn)
+        .map_err(|e| format!("Error fetching balance changes: {}", e))?;
 
-        // undo all balance changes
+    if resolution.is_none() {
         let mut err = None;
         let transaction = conn.transaction::<(), DieselError, _>(|conn| {
+            // undo all balance changes
             for (user_id, balance_change) in bchanges {
                 change_balance(&user_id, &-balance_change, conn)
                     .map_err(|e| {
@@ -217,6 +221,14 @@ pub fn resolve_market(
                         DieselError::RollbackTransaction
                     })?;
             }
+
+            // give all liquidity back to owner
+            let owner_id = market.owner_id.clone();
+            change_balance(&owner_id, &market.liquidity, conn)
+                .map_err(|e| {
+                    err = Some(format!("Error giving liquidity back to owner: {}", e));
+                    DieselError::RollbackTransaction
+                })?;
 
             diesel::update(markets_dsl::markets.filter(markets_dsl::id.eq(market_id)))
                 .set((
@@ -241,9 +253,13 @@ pub fn resolve_market(
     let positions = get_positions(market_id, conn)
         .map_err(|e| format!("Error fetching positions: {}", e))?;
 
-    // reward traders by how many correct shares they bought
+    let bankroll_left= market.liquidity.clone() - 
+        bchanges.values()
+            .sum::<BigDecimal>();
+
     let mut err = None;
     let transaction = conn.transaction::<(), DieselError, _>(|conn| {
+        // reward traders by how many correct shares they bought
         for (users_id, shares) in positions {
             let reward = shares[share_index].clone();
             change_balance(&users_id, &reward, conn)
@@ -252,6 +268,14 @@ pub fn resolve_market(
                     DieselError::RollbackTransaction
                 })?;
         }
+
+        // give remaining bankroll to owner
+        let owner_id = market.owner_id.clone();
+        change_balance(&owner_id, &bankroll_left, conn)
+            .map_err(|e| {
+                err = Some(format!("Error giving remaining bankroll to owner: {}", e));
+                DieselError::RollbackTransaction
+            })?;
 
         diesel::update(markets_dsl::markets.filter(markets_dsl::id.eq(market_id)))
             .set((
