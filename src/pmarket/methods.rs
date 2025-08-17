@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::LazyLock;
+use bigdecimal::FromPrimitive;
 use bigdecimal::Zero;
 use diesel::prelude::*;
 use diesel::result::Error as DieselError;
@@ -6,6 +8,8 @@ use bigdecimal::BigDecimal;
 use crate::models::*;
 use crate::schema::*;
 use crate::pmarket::lmsr::schange_to_bchange;
+
+static DEFAULT_BALANCE: LazyLock<BigDecimal> = LazyLock::new(|| BigDecimal::from_f64(1000.0).unwrap());
 
 pub fn create_user(
     id: &str, 
@@ -20,7 +24,25 @@ pub fn create_user(
         .values(new_user)
         .execute(conn)
         .map(|_| ())
-        .map_err(|e| format!("Error creating new user: {}", e))
+        .map_err(|e| format!("Error creating new user: {}", e))?;
+
+    change_balance(id, &DEFAULT_BALANCE, conn)
+}
+
+pub fn try_create_user(
+    id: &str, 
+    conn: &mut PgConnection
+) -> Result<(), String> {
+    match create_user(id, conn) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            if e.contains("duplicate key value violates unique constraint") {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 pub fn change_balance(
@@ -43,7 +65,7 @@ pub fn create_market(
     owner_id: &str,
     liquidity: &BigDecimal,
     conn: &mut PgConnection,
-) -> Result<(), String> {
+) -> Result<i32, String> {
     
     let new_market = NewMarket {
         title: title.to_string(),
@@ -53,25 +75,32 @@ pub fn create_market(
     };
     
     let mut err = None;
+    let mut id = None;
     let transaction = conn.transaction::<(), DieselError, _>(|conn| {
         change_balance(owner_id, &-liquidity, conn)
             .map_err(|e| {
                 err = Some(format!("Error deducting owner's balance for new market: {}", e));
                 DieselError::RollbackTransaction
             })?;
-        diesel::insert_into(markets::table)
+        match diesel::insert_into(markets::table)
             .values(&new_market)
-            .execute(conn)
-            .map(|_| ())
-            .map_err(|e| {
+            .returning(markets::id)
+            .get_result::<i32>(conn)
+        {
+            Ok(market_id) => {
+                id = Some(market_id);
+                Ok(())
+            }
+            Err(e) => {
                 err = Some(format!("Error creating new market: {}", e));
-                DieselError::RollbackTransaction
-            })
+                Err(DieselError::RollbackTransaction)
+            }
+        }
     });
     if let Err(e) = transaction {
         return Err(err.unwrap_or_else(|| format!("Transaction failed: {}", e)));
     }
-    Ok(())
+    Ok(id.unwrap())
 }
 
 pub fn check_valid_trade(
@@ -132,6 +161,31 @@ pub fn create_trade(
             .map(|_| ())
             .map_err(|e| {
                 err = Some(format!("Error creating new trade: {}", e));
+                DieselError::RollbackTransaction
+            })?;
+        
+        let current_bought_shares = markets::table
+            .filter(markets::id.eq(market_id))
+            .select(markets::bought_shares)
+            .first::<Vec<Option<BigDecimal>>>(conn)
+            .map_err(|e| {
+                err = Some(format!("Error fetching current bought_shares: {}", e));
+                DieselError::RollbackTransaction
+            })?;
+        let mut current_bought_shares: Vec<BigDecimal> = current_bought_shares
+            .into_iter()
+            .map(|opt| opt.unwrap())
+            .collect();
+
+        let idx: usize = share_index.try_into().unwrap();
+        current_bought_shares[idx] += shares_amount.clone();
+
+        diesel::update(markets::table.filter(markets::id.eq(market_id)))
+            .set(markets::bought_shares.eq(current_bought_shares))
+            .execute(conn)
+            .map(|_| ())
+            .map_err(|e| {
+                err = Some(format!("Error updating market bought_shares: {}", e));
                 DieselError::RollbackTransaction
             })
     });

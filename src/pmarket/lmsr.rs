@@ -9,7 +9,7 @@ fn logsumexp(
     max + sum.ln()
 }
 
-fn cost_function_algo(
+pub fn cost_function_algo(
     liquidity: f64,
     shares: &Vec<f64>
 ) -> f64 {
@@ -18,7 +18,7 @@ fn cost_function_algo(
     liquidity * lse
 }
 
-fn prob_algo(
+pub fn prob_algo(
     liquidity: f64,
     shares: &Vec<f64>,
 ) -> Vec<f64> {
