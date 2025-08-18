@@ -139,7 +139,7 @@ pub fn create_trade(
     if !is_valid {
         return Err("Invalid trade".to_string());
     }
-    
+
     let new_trade = NewTrade {
         market_id,
         user_id: user_id.to_string(),
@@ -307,7 +307,7 @@ pub fn resolve_market(
     let positions = get_positions(market_id, conn)
         .map_err(|e| format!("Error fetching positions: {}", e))?;
 
-    let bankroll_left= market.liquidity.clone() - 
+    let mut bankroll_left = market.liquidity.clone() - 
         bchanges.values()
             .sum::<BigDecimal>();
 
@@ -316,6 +316,7 @@ pub fn resolve_market(
         // reward traders by how many correct shares they bought
         for (users_id, shares) in positions {
             let reward = shares[share_index].clone();
+            bankroll_left -= &reward;
             change_balance(&users_id, &reward, conn)
                 .map_err(|e| {
                     err = Some(format!("Error updating user balance for resolution: {}", e));

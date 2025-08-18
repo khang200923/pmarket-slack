@@ -41,8 +41,11 @@ def handle_pmarket_command(ack, command, client):
 def handle_pmarket_add(ack, body, view, say):
     values = list(view["state"]["values"].values())
     values = {k: v for d in values for k, v in d.items()}
+    print("dbg", values)
     title = values["action_title_pmarket_add"]["value"]
-    description = values["action_desc_pmarket_add"].get("value", "")
+    description = values["action_desc_pmarket_add"].get("value", " ")
+    if description is None:
+        description = " "
     liquidity = float(values["action_liquidity_pmarket_add"]["value"])
     if liquidity < 100:
         ack({
@@ -63,6 +66,7 @@ def handle_pmarket_add(ack, body, view, say):
         })
         return
     ack()
+    print("desc: ", repr(description))
     market_id = ps.create_market(
         title,
         description,
@@ -71,11 +75,12 @@ def handle_pmarket_add(ack, body, view, say):
     )
     private_metadata = json.loads(view["private_metadata"])
     view = views.pmarket_view(market_id)
+    print("viewww", view)
     say(
         channel=private_metadata["channel_id"],
         thread_ts=private_metadata.get("thread_ts"),
         blocks=view["blocks"],
-        text=f"New market: {title}",
+        text=f"New market: \"{title}\"",
         metadata={
             "event_type": "pmarket_created",
             "event_payload": {
@@ -209,9 +214,9 @@ def handle_general_trade_view(ack, body, view, buy_or_sell: bool, yes_or_no: boo
         channel=private_metadata["channel_id"],
         ts=private_metadata["ts"],
         blocks=view["blocks"],
-        text=f"New trade at market: {market_data['title']}",
+        text=f"New trade at market: \"{market_data['title']}\"",
         metadata={
-            "event_type": "pmarket_created",
+            "event_type": "pmarket_trade",
             "event_payload": {
                 "market_id": market_id,
             }
@@ -233,6 +238,37 @@ def handle_sell_view_yes(ack, body, view):
 @app.view("sell_view_no")
 def handle_sell_view_no(ack, body, view):
     handle_general_trade_view(ack, body, view, False, False)
+
+@app.action("options_menu")
+def handle_options_menu(ack, body):
+    ack()
+    market_id = int(body['message']['metadata']['event_payload']['market_id'])
+    value = body['actions'][0]['selected_option']['value']
+    print("bef", ps.get_market_data(market_id))
+    if value == "resolve_yes":
+        ps.resolve_market(market_id, 0)
+    elif value == "resolve_no":
+        ps.resolve_market(market_id, 1)
+    elif value == "resolve_na":
+        ps.resolve_market(market_id, None)
+    else:
+        raise ValueError(f"Unknown option value: {value}")
+    market_data = ps.get_market_data(market_id)
+    print("aft", market_data)
+    view = views.pmarket_view(market_id)
+    print("view", view)
+    app.client.chat_update(
+        channel=body["container"]["channel_id"],
+        ts=body["container"]["message_ts"],
+        blocks=view["blocks"],
+        text=f"Resolution at market \"{market_data['title']}\"",
+        metadata={
+            "event_type": "pmarket_resolved",
+            "event_payload": {
+                "market_id": market_id,
+            }
+        }
+    )
 
 def main():
     handler = SocketModeHandler(app, app_token=os.environ.get("SLACK_APP_TOKEN"))

@@ -34,7 +34,72 @@ def home_view(
 def pmarket_view(
     market_id: int,
 ):
+    print("hiii")
     market = ps.get_market_data(market_id)
+    is_resolved = market['is_resolved']
+    resolution = market['resolution']
+    resolution_text = ":question: N/A"
+    if resolution is not None:
+        resolution_text = ":white_check_mark: YES" if resolution == 0 else ":x: NO"
+
+    menu_options = [
+        {
+            "text": {
+                "type": "plain_text",
+                "text": "Resolve :white_check_mark: YES"
+            },
+            "value": "resolve_yes"
+        },
+        {
+            "text": {
+                "type": "plain_text",
+                "text": "Resolve :x: NO"
+            },
+            "value": "resolve_no"
+        },
+        {
+            "text": {
+                "type": "plain_text",
+                "text": "Resolve :question: N/A"
+            },
+            "value": "resolve_na"
+        }
+    ]
+    context_elements = [
+        {
+            "type": "mrkdwn",
+            "text": f"*{market['liquidity']:.0f}* :dollar: liquidity"
+        }
+    ]
+    probability_section = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{market['prob'][0]*100:.0f}%* chance"
+            },
+        },
+    ]
+    if is_resolved:
+        print("yessssss")
+        menu_options = [
+            {
+                "text": {
+                    "type": "plain_text",
+                    "text": "Unresolve"
+                },
+                "value": "unresolve"
+            },
+        ]
+        probability_section = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"Resolved *{resolution_text}*"
+                },
+            },
+        ]
 
     return {
         "blocks": [
@@ -45,35 +110,22 @@ def pmarket_view(
                     "text": f"*{market['title']}*"
                 },
                 "accessory": {
-                    "type": "button",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "...",
-                        "emoji": true
-                    },
-                    "value": "options",
-                    "action_id": "action_options_pmarket"
+                    "type": "overflow",
+                    "options": menu_options,
+                    "action_id": "options_menu"
                 }
             },
+            *probability_section,
             {
                 "type": "context",
-                "elements": [
-                    {
-                        "type": "mrkdwn",
-                        "text": f"*{market['prob'][0]*100:.0f}%* chance"
-                    },
-                    {
-                        "type": "mrkdwn",
-                        "text": f"*{market['liquidity']:.0f}* :dollar: liquidity"
-                    }
-                ]
+                "elements": context_elements
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"{market['description'] if market['description'] else ' '}"
-                }
+                    "text": f"{market['description']}"
+                },
             },
             {
                 "type": "actions",
@@ -183,7 +235,8 @@ def pmarket_add_view(
                 "type": "input",
                 "block_id": "block_desc_pmarket_add",
                 "element": {
-                    "type": "rich_text_input",
+                    "type": "plain_text_input",
+                    "multiline": true,
                     "action_id": "action_desc_pmarket_add",
                     "placeholder": {
                         "type": "plain_text",
