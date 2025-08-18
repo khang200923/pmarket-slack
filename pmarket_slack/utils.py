@@ -15,3 +15,4 @@ def bet_amount(
         shares_aft[1] += shares_amount
     lmsr_aft = ps.get_lmsr_info(deepcopy(shares_aft), market_data["liquidity"])
     return lmsr_aft["cost_func"] - lmsr_bef["cost_func"]
+    

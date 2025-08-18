@@ -82,21 +82,46 @@ def pmarket_view(
                         "type": "button",
                         "text": {
                             "type": "plain_text",
-                            "text": ":white_check_mark: Buy YES shares",
+                            "text": "Buy :white_check_mark: YES shares",
                             "emoji": true
                         },
                         "value": "yes",
-                        "action_id": "action_bet_yes"
+                        "action_id": "action_buy_yes"
                     },
                     {
                         "type": "button",
                         "text": {
                             "type": "plain_text",
-                            "text": ":x: Buy NO shares",
+                            "text": "Buy :x: NO shares",
                             "emoji": true
                         },
                         "value": "no",
-                        "action_id": "action_bet_no"
+                        "action_id": "action_buy_no"
+                    }
+                ]
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "Sell :white_check_mark: YES shares",
+                            "emoji": true
+                        },
+                        "value": "yes",
+                        "action_id": "action_sell_yes"
+                    },
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "Sell :x: NO shares",
+                            "emoji": true
+                        },
+                        "value": "no",
+                        "action_id": "action_sell_no"
                     }
                 ]
             },
@@ -197,37 +222,47 @@ def pmarket_add_view(
         })
     }
 
-def bet_view(
+def trade_view(
     market_data,
+    balance: float,
+    user_positions: list[float],
     shares_amount: float,
+    buy_or_sell: bool,
     yes_or_no: bool,
     channel_id: str,
     ts: str
 ):
     yesno = "yes" if yes_or_no else "no"
     YESNO = "YES" if yes_or_no else "NO"
+    buysell = "buy" if buy_or_sell else "sell"
+    BuySell = "Buy" if buy_or_sell else "Sell"
     yesnoem = ":white_check_mark:" if yes_or_no else ":x:"
+    position = user_positions[0] if yes_or_no else user_positions[1]
+    bet_amount_or_payoff_display = "Bet amount" if buy_or_sell else "Payoff"
     shares_bef = market_data["bought_shares"]
     lmsr_bef = ps.get_lmsr_info(deepcopy(shares_bef), market_data["liquidity"])
-    print(lmsr_bef)
     shares_aft = deepcopy(shares_bef)
+    shares_change = shares_amount if buy_or_sell else -shares_amount
     if yes_or_no:
-        shares_aft[0] += shares_amount
+        shares_aft[0] += shares_change
     else:
-        shares_aft[1] += shares_amount
+        shares_aft[1] += shares_change
     lmsr_aft = ps.get_lmsr_info(deepcopy(shares_aft), market_data["liquidity"])
-    print(lmsr_aft)
+    balance_or_position_display = f"Position: *{position:.0f}* {yesnoem} {YESNO} shares"
+    if buy_or_sell:
+        balance_or_position_display = f"Balance: *{balance:.0f}* :dollar:"
+    bet_amount_or_payoff = lmsr_aft['cost_func'] - lmsr_bef['cost_func'] if buy_or_sell else lmsr_bef['cost_func'] - lmsr_aft['cost_func']
     return {
         "type": "modal",
-        "callback_id": f"bet_view_{yesno}",
+        "callback_id": f"{buysell}_view_{yesno}",
         "title": {
             "type": "plain_text",
-            "text": f"Buy {YESNO} shares",
+            "text": f"{BuySell} {YESNO} shares",
             "emoji": true
         },
         "submit": {
             "type": "plain_text",
-            "text": "Bet",
+            "text": f"{BuySell}",
             "emoji": true
         },
         "close": {
@@ -238,7 +273,7 @@ def bet_view(
         "blocks": [
             {
                 "type": "input",
-                "block_id": f"block_shares_buy_{yesno}",
+                "block_id": f"block_shares_{buysell}_{yesno}",
                 "dispatch_action": true,
                 "element": {
                     "type": "number_input",
@@ -246,7 +281,7 @@ def bet_view(
                         "trigger_actions_on": ["on_enter_pressed", "on_character_entered"]
                     },
                     "is_decimal_allowed": false,
-                    "action_id": f"action_shares_buy_{yesno}",
+                    "action_id": f"action_shares_{buysell}_{yesno}",
                     "placeholder": {
                         "type": "plain_text",
                         "text": "0"
@@ -263,18 +298,16 @@ def bet_view(
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"Bet amount: *{lmsr_aft['cost_func'] - lmsr_bef['cost_func']:.0f}* :dollar:"
+                    "text": f"""\
+{balance_or_position_display}
+{bet_amount_or_payoff_display}: *{bet_amount_or_payoff:.0f}* :dollar:
+Probability: *{lmsr_bef['probs'][0]*100:.0f}%* → *{lmsr_aft['probs'][0]*100:.0f}%*"""
                 }
             },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"Probability: *{lmsr_bef['probs'][0]*100:.0f}%* → *{lmsr_aft['probs'][0]*100:.0f}%*"
-                }
-            }
         ],
         "private_metadata": json.dumps({
+            "balance": balance,
+            "user_positions": user_positions,
             "market_data": market_data,
             "channel_id": channel_id,
             "ts": ts,

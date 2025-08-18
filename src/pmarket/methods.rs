@@ -120,12 +120,12 @@ pub fn check_valid_trade(
         .first::<Market>(conn)
         .map_err(|e| format!("Error fetching market: {}", e))?;
     let balance_change = schange_to_bchange(&market, shares_amount.clone(), share_index);
-    let new_balance = balance + balance_change;
+    let new_balance = balance + &balance_change;
     let is_resolved = market.is_resolved;
     if is_resolved {
         return Ok((false, BigDecimal::zero()));
     }
-    Ok((new_balance >= BigDecimal::zero(), new_balance))
+    Ok((new_balance >= BigDecimal::zero(), balance_change))
 }
 
 pub fn create_trade(
@@ -139,7 +139,7 @@ pub fn create_trade(
     if !is_valid {
         return Err("Invalid trade".to_string());
     }
-
+    
     let new_trade = NewTrade {
         market_id,
         user_id: user_id.to_string(),

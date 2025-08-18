@@ -7,7 +7,7 @@ mod db;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use pyo3::exceptions::{PyException, PyValueError};
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ToPrimitive};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -111,24 +111,24 @@ fn create_trade<'py>(
 }
 
 #[pyfunction]
-fn get_positions(market_id: i32) -> PyResult<HashMap<String, Vec<String>>> {
+fn get_positions(market_id: i32) -> PyResult<HashMap<String, Vec<f64>>> {
     let mut conn = db::establish_connection();
     let positions = pmarket::methods::get_positions(market_id, &mut conn)
         .map_err(PyException::new_err)?;
     Ok(positions.into_iter()
         .map(|(user, shares)| {
-            (user, shares.into_iter().map(|s| s.to_string()).collect())
+            (user, shares.into_iter().map(|s| s.to_f64().unwrap()).collect())
         })
         .collect())
 }
 
 #[pyfunction]
-fn get_balance_changes_on_market(market_id: i32) -> PyResult<HashMap<String, String>> {
+fn get_balance_changes_on_market(market_id: i32) -> PyResult<HashMap<String, f64>> {
     let mut conn = db::establish_connection();
     let changes = pmarket::methods::get_balance_changes_on_market(market_id, &mut conn)
         .map_err(PyException::new_err)?;
     Ok(changes.into_iter()
-        .map(|(user, change)| (user, change.to_string()))
+        .map(|(user, change)| (user, change.to_f64().unwrap()))
         .collect())
 }
 

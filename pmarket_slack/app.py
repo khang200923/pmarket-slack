@@ -26,31 +26,25 @@ def handle_app_home_opened(event, client):
 def handle_pmarket_command(ack, command, client):
     user_id = command["user_id"]
     ps.try_create_user(user_id)
-    print("a", command["text"])
     ack()
-    print("b", command["text"])
     view = views.pmarket_add_view(
         command["text"], 
         channel_id=command["channel_id"],
         thread_ts=command.get("thread_ts", None)
     )
-    print("c", command["text"])
     client.views_open(
         trigger_id=command["trigger_id"],
         view=view
     )
-    print("d", command["text"])
 
 @app.view("pmarket_add_view")
 def handle_pmarket_add(ack, body, view, say):
-    print("a2", view["state"])
     values = list(view["state"]["values"].values())
     values = {k: v for d in values for k, v in d.items()}
     title = values["action_title_pmarket_add"]["value"]
     description = values["action_desc_pmarket_add"].get("value", "")
     liquidity = float(values["action_liquidity_pmarket_add"]["value"])
     if liquidity < 100:
-        print("aaaaaa")
         ack({
             "response_action": "errors", 
             "errors": {
@@ -76,7 +70,6 @@ def handle_pmarket_add(ack, body, view, say):
         Decimal(liquidity)
     )
     private_metadata = json.loads(view["private_metadata"])
-    print(private_metadata)
     view = views.pmarket_view(market_id)
     say(
         channel=private_metadata["channel_id"],
@@ -91,37 +84,50 @@ def handle_pmarket_add(ack, body, view, say):
         }
     )
 
-def handle_general_bet(ack, body, yes_or_no: bool):
+def handle_general_trade(ack, body, buy_or_sell: bool, yes_or_no: bool):
     ack()
-    print(body)
     market_id = int(body['message']['metadata']['event_payload']['market_id'])
     channel_id = body["container"]["channel_id"]
     ts = body["container"]["message_ts"]
     market_data = ps.get_market_data(market_id)
-    view = views.bet_view(market_data, 0, yes_or_no, channel_id, ts)
+    user_id = body["user"]["id"]
+    user = ps.get_user_data(user_id)
+    balance = user["balance"]
+    user_position = ps.get_positions(market_id).get(user_id, [0, 0])
+    view = views.trade_view(market_data, balance, user_position, 0, buy_or_sell, yes_or_no, channel_id, ts)
     app.client.views_open(
         trigger_id=body["trigger_id"],
         view=view
     )
 
-@app.action("action_bet_yes")
-def handle_bet_yes(ack, body):
-    handle_general_bet(ack, body, True)
+@app.action("action_buy_yes")
+def handle_buy_yes(ack, body):
+    handle_general_trade(ack, body, True, True)
 
-@app.action("action_bet_no")
-def handle_bet_no(ack, body):
-    handle_general_bet(ack, body, False)
+@app.action("action_buy_no")
+def handle_buy_no(ack, body):
+    handle_general_trade(ack, body, True, False)
 
-def handle_general_shares_buy(ack, body, yes_or_no: bool):
+@app.action("action_sell_yes")
+def handle_sell_yes(ack, body):
+    handle_general_trade(ack, body, False, True)
+    
+@app.action("action_sell_no")
+def handle_sell_no(ack, body):
+    handle_general_trade(ack, body, False, False)
+
+def handle_general_shares_trade(ack, body, buy_or_sell: bool, yes_or_no: bool):
     ack()
     private_metadata = json.loads(body["view"]["private_metadata"])
-    print("ggfg", private_metadata)
     market_data = private_metadata["market_data"]
     shares_amount = float(body["actions"][0]["value"])
     hashh = body["view"]["hash"]
-    view = views.bet_view(
+    view = views.trade_view(
         market_data,
+        private_metadata["balance"],
+        private_metadata["user_positions"],
         shares_amount,
+        buy_or_sell,
         yes_or_no,
         private_metadata["channel_id"],
         private_metadata["ts"]
@@ -135,42 +141,69 @@ def handle_general_shares_buy(ack, body, yes_or_no: bool):
 
 @app.action("action_shares_buy_yes")
 def handle_shares_buy_yes(ack, body):
-    handle_general_shares_buy(ack, body, True)
+    handle_general_shares_trade(ack, body, True, True)
 
 @app.action("action_shares_buy_no")
 def handle_shares_buy_no(ack, body):
-    handle_general_shares_buy(ack, body, False)
+    handle_general_shares_trade(ack, body, True, False)
+    
+@app.action("action_shares_sell_yes")
+def handle_shares_sell_yes(ack, body):
+    handle_general_shares_trade(ack, body, False, True)
 
-def handle_general_bet_view(ack, body, view, yes_or_no: bool):
+@app.action("action_shares_sell_no")
+def handle_shares_sell_no(ack, body):
+    handle_general_shares_trade(ack, body, False, False)
+
+def handle_general_trade_view(ack, body, view, buy_or_sell: bool, yes_or_no: bool):
     values = list(view["state"]["values"].values())
     values = {k: v for d in values for k, v in d.items()}
     private_metadata = json.loads(view["private_metadata"])
     market_id = private_metadata["market_data"]["id"]
-    shares_amount = float(values["action_shares_buy_" + ('yes' if yes_or_no else 'no')]["value"])
-    bet_amount = utils.bet_amount(
-        ps.get_market_data(market_id),
-        shares_amount,
-        yes_or_no
-    )
+    buysell = "buy" if buy_or_sell else "sell"
+    shares_amount = float(values[f"action_shares_{buysell}_" + ('yes' if yes_or_no else 'no')]["value"])
     user_id = body["user"]["id"]
     user = ps.get_user_data(user_id)
-    if user["balance"] < bet_amount:
-        ack({
-            "response_action": "errors",
-            "errors": {
-                f"block_shares_buy_{'yes' if yes_or_no else 'no'}": f"Not enough funds. Balance: {user['balance']:.0f}, Bet amount: {bet_amount:.0f}"
-            }
-        })
-        return
-    ack()
-    ps.create_trade(
-        market_id,
-        user_id,
-        shares_amount,
-        0 if yes_or_no else 1
-    )
+    if buy_or_sell:
+        bet_amount = utils.bet_amount(
+            ps.get_market_data(market_id),
+            shares_amount,
+            yes_or_no
+        )
+        if user["balance"] < bet_amount:
+            ack({
+                "response_action": "errors",
+                "errors": {
+                    f"block_shares_buy_{'yes' if yes_or_no else 'no'}": f"Not enough funds. Balance: {user['balance']:.0f}, Bet amount: {bet_amount:.0f}"
+                }
+            })
+            return
+        ack()
+        ps.create_trade(
+            market_id,
+            user_id,
+            shares_amount,
+            0 if yes_or_no else 1
+        )
+    else:
+        user_position = ps.get_positions(market_id).get(user_id, [0, 0])
+        position = user_position[0] if yes_or_no else user_position[1]
+        if position < shares_amount:
+            ack({
+                "response_action": "errors",
+                "errors": {
+                    f"block_shares_sell_{'yes' if yes_or_no else 'no'}": f"Not enough shares. Position: {position:.0f}, Shares to sell: {shares_amount:.0f}"
+                }
+            })
+            return
+        ack()
+        ps.create_trade(
+            market_id,
+            user_id,
+            -shares_amount,
+            0 if yes_or_no else 1
+        )
     market_data = ps.get_market_data(market_id)
-    print("eeeeeeeeeeeeeeeeeeeee", market_data) 
     view = views.pmarket_view(market_id)
     app.client.chat_update(
         channel=private_metadata["channel_id"],
@@ -185,13 +218,21 @@ def handle_general_bet_view(ack, body, view, yes_or_no: bool):
         }
     )
 
-@app.view("bet_view_yes")
-def handle_bet_view_yes(ack, body, view):
-    handle_general_bet_view(ack, body, view, True)
+@app.view("buy_view_yes")
+def handle_buy_view_yes(ack, body, view):
+    handle_general_trade_view(ack, body, view, True, True)
 
-@app.view("bet_view_no")
-def handle_bet_view_no(ack, body, view):
-    handle_general_bet_view(ack, body, view, False)
+@app.view("buy_view_no")
+def handle_buy_view_no(ack, body, view):
+    handle_general_trade_view(ack, body, view, True, False)
+
+@app.view("sell_view_yes")
+def handle_sell_view_yes(ack, body, view):
+    handle_general_trade_view(ack, body, view, False, True)
+
+@app.view("sell_view_no")
+def handle_sell_view_no(ack, body, view):
+    handle_general_trade_view(ack, body, view, False, False)
 
 def main():
     handler = SocketModeHandler(app, app_token=os.environ.get("SLACK_APP_TOKEN"))
