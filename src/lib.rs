@@ -4,6 +4,8 @@ mod schema;
 mod models;
 mod db;
 
+use chrono::DateTime;
+use chrono::NaiveDateTime;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use pyo3::exceptions::{PyException, PyValueError};
@@ -34,6 +36,13 @@ fn pydecimal_to_bigdecimal<'py>(
     let decimal = value.str()?.extract::<String>()?;
     BigDecimal::from_str(&decimal)
         .map_err(|e| PyValueError::new_err(format!("Invalid BigDecimal: {}", e)))
+}
+
+#[pyfunction]
+fn get_reminders_and_update_time() -> PyResult<Vec<i32>> {
+    let mut conn = db::establish_connection();
+    pmarket::methods::get_reminders_and_update_time(&mut conn)
+        .map_err(PyException::new_err)
 }
 
 #[pyfunction]
@@ -69,12 +78,41 @@ fn create_market<'py>(
     title: &str,
     description: &str,
     owner_id: &str,
-    liquidity: Bound<'py, PyAny>
+    liquidity: Bound<'py, PyAny>,
+    remind_at: i32,
 ) -> PyResult<i32> {
     let mut conn = db::establish_connection();
     let liquidity = pydecimal_to_bigdecimal(py, liquidity)
         .map_err(|e| PyValueError::new_err(format!("Invalid liquidity: {}", e)))?;
-    pmarket::methods::create_market(title, description, owner_id, &liquidity, &mut conn)
+    let remind_at = DateTime::from_timestamp(remind_at as i64, 0)
+        .ok_or_else(|| PyValueError::new_err("Invalid timestamp for remind_at"))?
+        .naive_utc();
+    pmarket::methods::create_market(
+        title, 
+        description, 
+        owner_id, 
+        &liquidity, 
+        &remind_at, 
+        &mut conn
+    )
+        .map_err(PyException::new_err)
+}
+
+#[pyfunction]
+fn create_market_slack_msg(
+    market_id: i32,
+    channel_id: &str,
+    ts: &str,
+    main: bool,
+) -> PyResult<()> {
+    let mut conn = db::establish_connection();
+    pmarket::methods::create_market_slack_msg(
+        market_id,
+        channel_id,
+        ts,
+        main,
+        &mut conn
+    )
         .map_err(PyException::new_err)
 }
 
@@ -189,10 +227,12 @@ fn get_lmsr_info<'py>(
 
 #[pymodule]
 fn pmarket_slack(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(get_reminders_and_update_time, py)?)?;
     m.add_function(wrap_pyfunction!(create_user, py)?)?;
     m.add_function(wrap_pyfunction!(try_create_user, py)?)?;
     m.add_function(wrap_pyfunction!(change_balance, py)?)?;
     m.add_function(wrap_pyfunction!(create_market, py)?)?;
+    m.add_function(wrap_pyfunction!(create_market_slack_msg, py)?)?;
     m.add_function(wrap_pyfunction!(check_valid_trade, py)?)?;
     m.add_function(wrap_pyfunction!(create_trade, py)?)?;
     m.add_function(wrap_pyfunction!(get_positions, py)?)?;

@@ -30,9 +30,16 @@ pub fn get_market_data(
     market_id: i32, 
     conn: &mut PgConnection
 ) -> Result<Value, String> {
-    use crate::schema::markets::dsl::*;
+    use crate::schema::markets::dsl as markets_dsl;
+    use crate::schema::market_slack_msg::dsl as msm_dsl;
+    let main_slack_msg = msm_dsl::market_slack_msg
+        .filter(msm_dsl::market_id.eq(market_id))
+        .filter(msm_dsl::main.eq(true))
+        .first::<crate::models::MarketSlackMsg>(conn)
+        .optional()
+        .map_err(|e| format!("Database error: {}", e))?;
 
-    match markets
+    match markets_dsl::markets
         .find(market_id)
         .first::<crate::models::Market>(conn) 
     {
@@ -46,11 +53,19 @@ pub fn get_market_data(
                 "bought_shares": market.bought_shares.iter()
                     .map(|s| s.clone().unwrap().to_f64().unwrap())
                     .collect::<Vec<f64>>(),
+                "remind_at": market.remind_at.and_utc().timestamp(),
                 "is_resolved": market.is_resolved,
                 "resolution": market.resolution,
+                "created_at": market.created_at.and_utc().timestamp(),
+
                 "prob": prob(&market).iter()
                     .map(|p| p.to_f64().unwrap())
                     .collect::<Vec<f64>>(),
+                "main_slack_msg": json!({
+                    "exists": main_slack_msg.is_some(),
+                    "channel_id": main_slack_msg.as_ref().map(|msg| msg.channel_id.clone()),
+                    "ts": main_slack_msg.as_ref().map(|msg| msg.ts.clone()),
+                }),
             });
             Ok(market_data)
         },

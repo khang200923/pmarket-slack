@@ -1,5 +1,7 @@
-import json
+from datetime import datetime
 import os
+import json
+import schedule
 from decimal import Decimal
 from dotenv import load_dotenv
 from slack_bolt import App
@@ -30,7 +32,8 @@ def handle_pmarket_command(ack, command, client):
     view = views.pmarket_add_view(
         command["text"], 
         channel_id=command["channel_id"],
-        thread_ts=command.get("thread_ts", None)
+        thread_ts=command.get("thread_ts", None),
+        creator_id=user_id
     )
     client.views_open(
         trigger_id=command["trigger_id"],
@@ -41,7 +44,6 @@ def handle_pmarket_command(ack, command, client):
 def handle_pmarket_add(ack, body, view, say):
     values = list(view["state"]["values"].values())
     values = {k: v for d in values for k, v in d.items()}
-    print("dbg", values)
     title = values["action_title_pmarket_add"]["value"]
     description = values["action_desc_pmarket_add"].get("value", " ")
     if description is None:
@@ -55,6 +57,17 @@ def handle_pmarket_add(ack, body, view, say):
             }
         })
         return
+    remind_at = values["action_remind_pmarket_add"]["selected_date"]
+    remind_at = datetime.strptime(remind_at, "%Y-%m-%d")
+    if remind_at <= datetime.now():
+        ack({
+            "response_action": "errors", 
+            "errors": {
+                "block_remind_pmarket_add": "Resolution date must be in the future"
+            }
+        })
+        return
+    remind_at = int(remind_at.timestamp())
     user_id = body["user"]["id"]
     user = ps.get_user_data(user_id)
     if user["balance"] < liquidity:
@@ -66,17 +79,16 @@ def handle_pmarket_add(ack, body, view, say):
         })
         return
     ack()
-    print("desc: ", repr(description))
+    private_metadata = json.loads(view["private_metadata"])
     market_id = ps.create_market(
         title,
         description,
         user_id,
-        Decimal(liquidity)
+        Decimal(liquidity),
+        remind_at
     )
-    private_metadata = json.loads(view["private_metadata"])
     view = views.pmarket_view(market_id)
-    print("viewww", view)
-    say(
+    res = say(
         channel=private_metadata["channel_id"],
         thread_ts=private_metadata.get("thread_ts"),
         blocks=view["blocks"],
@@ -88,6 +100,9 @@ def handle_pmarket_add(ack, body, view, say):
             }
         }
     )
+    channel_id = res["channel"]
+    ts = res["message"]["ts"]
+    ps.create_market_slack_msg(market_id, channel_id, ts, True)
 
 def handle_general_trade(ack, body, buy_or_sell: bool, yes_or_no: bool):
     ack()
@@ -244,7 +259,6 @@ def handle_options_menu(ack, body):
     ack()
     market_id = int(body['message']['metadata']['event_payload']['market_id'])
     value = body['actions'][0]['selected_option']['value']
-    print("bef", ps.get_market_data(market_id))
     if value == "resolve_yes":
         ps.resolve_market(market_id, 0)
     elif value == "resolve_no":
@@ -254,9 +268,7 @@ def handle_options_menu(ack, body):
     else:
         raise ValueError(f"Unknown option value: {value}")
     market_data = ps.get_market_data(market_id)
-    print("aft", market_data)
     view = views.pmarket_view(market_id)
-    print("view", view)
     app.client.chat_update(
         channel=body["container"]["channel_id"],
         ts=body["container"]["message_ts"],
@@ -270,7 +282,23 @@ def handle_options_menu(ack, body):
         }
     )
 
+def reminder_job():
+    market_ids = ps.get_reminders_and_update_time()
+    for market_id in market_ids:
+        market_data = ps.get_market_data(market_id)
+        owner_id = market_data["owner_id"]
+        view = views.reminder_view(market_data)
+        conv = app.client.conversations_open(
+            users=owner_id
+        )["channel"]["id"] # type: ignore
+        app.client.chat_postMessage(
+            channel=conv,
+            blocks=view["blocks"],
+            text=f"Reminder for market: \"{market_data['title']}\"",
+        )
+
 def main():
+    schedule.every().hour.do(reminder_job)
     handler = SocketModeHandler(app, app_token=os.environ.get("SLACK_APP_TOKEN"))
     handler.start()
 

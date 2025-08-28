@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import datetime
 import json
 import pmarket_slack.pmarket_slack as ps
 
@@ -32,9 +33,8 @@ def home_view(
     }
 
 def pmarket_view(
-    market_id: int,
+    market_id: int
 ):
-    print("hiii")
     market = ps.get_market_data(market_id)
     is_resolved = market['is_resolved']
     resolution = market['resolution']
@@ -69,6 +69,10 @@ def pmarket_view(
         {
             "type": "mrkdwn",
             "text": f"*{market['liquidity']:.0f}* :dollar: liquidity"
+        },
+        {
+            "type": "mrkdwn",
+            "text": f"Resolves on *<!date^{market['remind_at']}^{{date_num}}|{datetime.fromtimestamp(market['remind_at']).strftime('%Y-%m-%d')}>*"
         }
     ]
     probability_section = [
@@ -81,7 +85,6 @@ def pmarket_view(
         },
     ]
     if is_resolved:
-        print("yessssss")
         menu_options = [
             {
                 "text": {
@@ -99,6 +102,12 @@ def pmarket_view(
                     "text": f"Resolved *{resolution_text}*"
                 },
             },
+        ]
+        context_elements = [
+            {
+                "type": "mrkdwn",
+                "text": f"*{market['liquidity']:.0f}* :dollar: liquidity"
+            }
         ]
 
     return {
@@ -192,8 +201,12 @@ def pmarket_view(
 def pmarket_add_view(
     title: str,
     channel_id: str,
-    thread_ts: str | None
+    thread_ts: str | None,
+    creator_id: str
 ):
+    creator = ps.get_user_data(creator_id)
+    balance = creator["balance"]
+
     return {
         "type": "modal",
         "callback_id": "pmarket_add_view",
@@ -267,7 +280,34 @@ def pmarket_add_view(
                     "text": "Liquidity :dollar:",
                     "emoji": true
                 }
-            }
+            },
+            {
+                "type": "input",
+                "block_id": "block_remind_pmarket_add",
+                "element": {
+                    "type": "datepicker",
+                    "initial_date": datetime.now().strftime("%Y-%m-%d"),
+                    "action_id": "action_remind_pmarket_add",
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "Select a date"
+                    },
+                },
+                "label": {
+                    "type": "plain_text",
+                    "text": "Remind me to resolve on",
+                    "emoji": true
+                }
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"Balance: *{balance:.0f}* :dollar:"
+                    },
+                ]
+            },
         ],
         "private_metadata": json.dumps({
             "channel_id": channel_id,
@@ -365,4 +405,31 @@ Probability: *{lmsr_bef['probs'][0]*100:.0f}%* → *{lmsr_aft['probs'][0]*100:.0
             "channel_id": channel_id,
             "ts": ts,
         })
+    }
+
+def reminder_view(
+    market_id: int
+):
+    market_data = ps.get_market_data(market_id)
+    user_id = market_data["owner_id"]
+    title = market_data["title"]
+    remind_ts = market_data["remind_at"]
+    remind_display_fallback = datetime.fromtimestamp(remind_ts).strftime("%Y-%m-%d")
+    msm = market_data.get("main_slack_msg")
+    assert msm["exists"]
+    channel_id, ts = msm["channel_id"], msm["ts"]
+
+    return {
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"""Hey <@{user_id}>, you have a market:
+<https://hackclub.slack.com/archives/{channel_id}/p{ts.replace('.', '')}|{title}>
+You said it should resolve on <!date^{remind_ts}^{{date_num}}|{remind_display_fallback}>.
+Please resolve it now, or edit the question to change the resolution date."""
+                }
+            }
+        ]
     }

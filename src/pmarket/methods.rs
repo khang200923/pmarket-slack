@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use bigdecimal::FromPrimitive;
 use bigdecimal::Zero;
+use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::result::Error as DieselError;
 use bigdecimal::BigDecimal;
@@ -10,6 +11,46 @@ use crate::schema::*;
 use crate::pmarket::lmsr::schange_to_bchange;
 
 static DEFAULT_BALANCE: LazyLock<BigDecimal> = LazyLock::new(|| BigDecimal::from_f64(1000.0).unwrap());
+
+fn update_time(
+    conn: &mut PgConnection,
+    now: Option<NaiveDateTime>
+) -> Result<(), String> {
+    use crate::schema::global_vars::dsl::*;
+
+    let now = now.unwrap_or(chrono::Utc::now().naive_utc());
+
+    diesel::update(global_vars.filter(id.eq(1)))
+        .set(time_now.eq(now))
+        .execute(conn)
+        .map_err(|e| format!("Error updating time: {}", e))?;
+    
+    Ok(())
+}
+
+pub fn get_reminders_and_update_time(
+    conn: &mut PgConnection,
+) -> Result<Vec<i32>, String> {
+    use crate::schema::markets::dsl as markets_dsl;
+    use crate::schema::global_vars::dsl as global_vars_dsl;
+
+    let now = chrono::Utc::now().naive_utc();
+    let prev = global_vars_dsl::global_vars
+        .select(global_vars_dsl::time_now)
+        .first::<NaiveDateTime>(conn)
+        .map_err(|e| format!("Error fetching previous time: {}", e))?;
+
+    let reminders = markets_dsl::markets
+        .filter(markets::remind_at.gt(prev))
+        .filter(markets::remind_at.le(now))
+        .select(markets::id)
+        .load::<i32>(conn)
+        .map_err(|e| format!("Error fetching reminders: {}", e))?;
+
+    update_time(conn, Some(now))?;
+
+    Ok(reminders)
+}
 
 pub fn create_user(
     id: &str, 
@@ -64,6 +105,7 @@ pub fn create_market(
     description: &str,
     owner_id: &str,
     liquidity: &BigDecimal,
+    remind_at: &NaiveDateTime,
     conn: &mut PgConnection,
 ) -> Result<i32, String> {
     
@@ -72,6 +114,7 @@ pub fn create_market(
         description: description.to_string(),
         owner_id: owner_id.to_string(),
         liquidity: liquidity.clone(),
+        remind_at: remind_at.clone(),
     };
     
     let mut err = None;
@@ -101,6 +144,27 @@ pub fn create_market(
         return Err(err.unwrap_or_else(|| format!("Transaction failed: {}", e)));
     }
     Ok(id.unwrap())
+}
+
+pub fn create_market_slack_msg(
+    market_id: i32,
+    channel_id: &str,
+    ts: &str,
+    main: bool,
+    conn: &mut PgConnection,
+) -> Result<(), String> {
+    let new_msg = MarketSlackMsg {
+        market_id,
+        channel_id: channel_id.to_string(),
+        ts: ts.to_string(),
+        main,
+    };
+
+    diesel::insert_into(market_slack_msg::table)
+        .values(new_msg)
+        .execute(conn)
+        .map(|_| ())
+        .map_err(|e| format!("Error creating market slack message: {}", e))
 }
 
 pub fn check_valid_trade(

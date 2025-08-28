@@ -20,9 +20,20 @@ pub struct Market {
     pub owner_id: String,
     pub liquidity: BigDecimal,
     pub bought_shares: Vec<Option<BigDecimal>>,
+    pub remind_at: NaiveDateTime,
     pub is_resolved: bool,
     pub resolution: Option<i32>,
     pub created_at: NaiveDateTime,
+}
+
+#[derive(Queryable, Selectable, Insertable)]
+#[diesel(table_name = crate::schema::market_slack_msg)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct MarketSlackMsg {
+    pub market_id: i32,
+    pub channel_id: String,
+    pub ts: String,
+    pub main: bool,
 }
 
 #[derive(Queryable, Selectable)]
@@ -54,6 +65,7 @@ pub struct NewMarket {
     pub description: String,
     pub owner_id: String,
     pub liquidity: BigDecimal,
+    pub remind_at: NaiveDateTime,
 }
 
 #[derive(Insertable)]
