@@ -287,7 +287,7 @@ def reminder_job():
     for market_id in market_ids:
         market_data = ps.get_market_data(market_id)
         owner_id = market_data["owner_id"]
-        view = views.reminder_view(market_data)
+        view = views.reminder_view(market_id)
         conv = app.client.conversations_open(
             users=owner_id
         )["channel"]["id"] # type: ignore
